@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Production Build
+dist/
+*.tsbuildinfo
+
+# Environment & Local Secrets
+.env
+.env.*
+!.env.example
+
+# Logs & Coverage
+*.log
+logs/
+coverage/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
