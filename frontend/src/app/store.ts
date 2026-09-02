@@ -4,6 +4,7 @@ import analysisReducer from '../features/analysis/analysisSlice';
 import portfolioReducer from '../features/portfolio/portfolioSlice';
 import chatReducer from '../features/chat/chatSlice';
 import leaderboardReducer from '../features/leaderboard/leaderboardSlice';
+import usersReducer from '../features/users/usersSlice';
 
 export const store = configureStore({
   reducer: {
@@ -12,6 +13,7 @@ export const store = configureStore({
     portfolio: portfolioReducer,
     chat: chatReducer,
     leaderboard: leaderboardReducer,
+    users: usersReducer,
   },
 });
 

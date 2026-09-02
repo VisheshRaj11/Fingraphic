@@ -1,8 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import { ENV } from '../config/env';
-import { dbChatMessage, dbUser } from '../config/storage';
-import { calculateAndSyncUserROI } from '../services/leaderboardService';
+import { dbUser } from '../config/storage';
+import { saveMessage } from '../services/chatService';
 import { JWTPayload } from '../types/index';
 
 interface AuthenticatedSocket extends Socket {
@@ -10,6 +10,7 @@ interface AuthenticatedSocket extends Socket {
 }
 
 export function setupSocketIO(io: Server): void {
+  // Store io instance on app for controller access
   io.use((socket: AuthenticatedSocket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
 
@@ -27,86 +28,54 @@ export function setupSocketIO(io: Server): void {
   });
 
   io.on('connection', (socket: AuthenticatedSocket) => {
-    console.log(`[Socket.io] User connected: ${socket.user?.userId} (${socket.id})`);
+    if (!socket.user?.userId) return;
 
-    // Join Ticker Room
-    socket.on('join_room', async (ticker: string) => {
-      if (!ticker) return;
-      const symbol = ticker.toUpperCase().trim();
-      const room = `room:${symbol}`;
-      socket.join(room);
-      console.log(`[Socket.io] User ${socket.user?.userId} joined ${room}`);
+    const userRoom = `user:${socket.user.userId}`;
+    socket.join(userRoom);
+    console.log(`[Socket.io] User connected: ${socket.user.userId} joined room ${userRoom}`);
 
-      try {
-        const history = await dbChatMessage.findByTicker(symbol, 50);
-        const formatted = history.map((msg: any) => ({
-          id: msg._id,
-          ticker: msg.ticker,
-          content: msg.content,
-          roiAtSend: msg.roiAtSend,
-          rankTier: msg.rankTier,
-          createdAt: msg.createdAt,
-          user: {
-            id: msg.userId?._id || msg.userId,
-            name: msg.userId?.name || 'Trader',
-            avatarUrl: msg.userId?.avatarUrl || '',
-          },
-        }));
-
-        socket.emit('room_history', { ticker: symbol, messages: formatted });
-      } catch (err: any) {
-        console.error(`[Socket.io] Error fetching room history for ${symbol}:`, err.message);
+    // Send 1:1 Private Message
+    socket.on('send_message', async (data: { recipientId: string; content: string }) => {
+      if (!socket.user || !data.recipientId || !data.content) {
+        socket.emit('error_message', { message: 'Recipient ID and message content are required.' });
+        return;
       }
-    });
 
-    // Leave Ticker Room
-    socket.on('leave_room', (ticker: string) => {
-      if (!ticker) return;
-      const room = `room:${ticker.toUpperCase().trim()}`;
-      socket.leave(room);
-      console.log(`[Socket.io] User ${socket.user?.userId} left ${room}`);
-    });
-
-    // Send Room Message
-    socket.on('send_message', async (data: { ticker: string; content: string }) => {
-      if (!socket.user || !data.ticker || !data.content) return;
-
-      const symbol = data.ticker.toUpperCase().trim();
+      const senderId = socket.user.userId;
+      const recipientId = data.recipientId.toString();
       const content = data.content.substring(0, 500);
 
       try {
-        const user = await dbUser.findById(socket.user.userId);
-        if (!user) return;
+        const sender = await dbUser.findById(senderId);
+        if (!sender) {
+          socket.emit('error_message', { message: 'Sender user profile not found.' });
+          return;
+        }
 
-        const roiData = await calculateAndSyncUserROI(socket.user.userId);
-
-        const chatDoc = await dbChatMessage.create({
-          userId: socket.user.userId,
-          ticker: symbol,
-          content,
-          roiAtSend: roiData.roi,
-          rankTier: roiData.rankTier,
-        });
+        // Save message (asserts connection server-side)
+        const savedDoc = await saveMessage({ senderId, recipientId, content });
 
         const broadcastPayload = {
-          id: chatDoc._id,
-          ticker: symbol,
-          content,
-          roiAtSend: roiData.roi,
-          rankTier: roiData.rankTier,
-          createdAt: chatDoc.createdAt,
-          user: {
-            id: user._id,
-            name: user.name,
-            avatarUrl: user.avatarUrl || '',
+          id: savedDoc._id,
+          senderId,
+          recipientId,
+          content: savedDoc.content,
+          roiAtSend: savedDoc.roiAtSend,
+          rankTier: savedDoc.rankTier,
+          createdAt: savedDoc.createdAt,
+          sender: {
+            id: sender._id,
+            name: sender.name,
+            avatarUrl: sender.avatarUrl || '',
           },
         };
 
-        const room = `room:${symbol}`;
-        io.to(room).emit('new_message', broadcastPayload);
+        // Emit new_message to BOTH personal rooms (sender & recipient)
+        io.to(`user:${senderId}`).emit('new_message', broadcastPayload);
+        io.to(`user:${recipientId}`).emit('new_message', broadcastPayload);
       } catch (err: any) {
-        console.error(`[Socket.io] Error processing message send for ${symbol}:`, err.message);
-        socket.emit('error_message', { message: 'Failed to broadcast message.' });
+        console.error(`[Socket.io] 1:1 message send error (${senderId} -> ${recipientId}):`, err.message);
+        socket.emit('error_message', { message: err.message || 'Failed to send message.' });
       }
     });
 

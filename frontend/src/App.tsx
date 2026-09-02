@@ -21,6 +21,7 @@ export const App: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [tradeModalTicker, setTradeModalTicker] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -29,7 +30,7 @@ export const App: React.FC = () => {
     }
   }, [dispatch, token]);
 
-  // When logged out, render Homepage / Landing Page (Image 1 style with floating top pill nav)
+  // When logged out, render Homepage / Landing Page
   if (!isAuthenticated && !isLoading) {
     if (showAuthModal) {
       return (
@@ -55,21 +56,27 @@ export const App: React.FC = () => {
     );
   }
 
-  // When logged in, render Dashboard with Top Header + Left Sidebar (Aside)
+  // When logged in, render Dashboard with Top Header + Left Navigation Drawer Sidebar
   return (
-    <div className="min-h-screen flex flex-col font-poppins antialiased select-none">
+    <div className="min-h-screen flex flex-col font-poppins antialiased select-none bg-slate-50/50">
       {/* Top Header Navbar */}
       <Navbar
         onOpenProfile={() => setProfileModalOpen(true)}
         onSelectTab={(tabIdx) => setActiveTab(tabIdx)}
+        onToggleMobileMenu={() => setMobileMenuOpen(true)}
       />
 
       <div className="flex-1 flex">
-        {/* Dashboard Left Navigation Sidebar (Aside) */}
-        <Sidebar activeTab={activeTab} onSelectTab={(tabIdx) => setActiveTab(tabIdx)} />
+        {/* Dashboard Left Navigation Sidebar (Responsive Slide-Over Drawer on Mobile) */}
+        <Sidebar
+          activeTab={activeTab}
+          onSelectTab={(tabIdx) => setActiveTab(tabIdx)}
+          mobileOpen={mobileMenuOpen}
+          onCloseMobile={() => setMobileMenuOpen(false)}
+        />
 
-        {/* Main Workspace Content Area */}
-        <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full">
+        {/* Main Workspace Content Area (Fluid full-width container, NOT constrained by max-w-7xl) */}
+        <main className="flex-1 p-4 sm:p-6 w-full overflow-x-hidden">
           {activeTab === 0 && (
             <AnalysisView onOpenTradeModal={(ticker) => setTradeModalTicker(ticker)} />
           )}

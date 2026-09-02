@@ -12,10 +12,10 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({ onOpenSignIn, on
       <div className="bg-white/90 backdrop-blur-sm border border-slate-200/80 rounded-full px-6 py-3 flex items-center gap-8 shadow-md max-w-fit mx-auto">
         {/* Left Cluster: Monogram Avatar + Wordmark */}
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-          <div className="w-9 h-9 rounded-full bg-[#1E1B3A] text-white font-bold text-sm flex items-center justify-center shadow-xs">
+          <div className="w-9 h-9 rounded-full bg-[#401175] text-white font-bold text-sm flex items-center justify-center shadow-xs">
             F
           </div>
-          <span className="font-bold text-lg text-[#1E1B3A] tracking-tight">
+          <span className="font-bold text-lg text-[#401175] tracking-tight">
             FinGraphic
           </span>
         </div>
@@ -31,7 +31,7 @@ export const FloatingNavbar: React.FC<FloatingNavbarProps> = ({ onOpenSignIn, on
 
           <button
             onClick={onOpenSignUp}
-            className="rounded-full bg-[#5B4FE0] hover:bg-[#4B3FD1] text-white font-bold text-sm px-5 py-2.5 shadow-md shadow-[#5B4FE0]/25 transition-all transform hover:scale-105"
+            className="rounded-full bg-[#401175] hover:bg-[#4B3FD1] text-white font-bold text-sm px-5 py-2.5 shadow-md shadow-[#5B4FE0]/25 transition-all transform hover:scale-105"
           >
             Get Started
           </button>

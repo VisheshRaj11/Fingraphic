@@ -22,3 +22,5 @@ export const disconnectMongo = async (): Promise<void> => {
     console.error(`[MongoDB] Disconnect error: ${error.message}`);
   }
 };
+
+export const isMongoConnected = (): boolean => mongoose.connection.readyState === 1;

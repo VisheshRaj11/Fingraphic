@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { User as UserIcon, Settings, PieChart, LogOut, ChevronDown } from 'lucide-react';
+import { User as UserIcon, Settings, PieChart, LogOut, ChevronDown, Menu } from 'lucide-react';
 import { RootState, AppDispatch } from '../../app/store';
 import { logout } from '../../features/auth/authSlice';
 import { RankBadge } from '../shared/Badge';
@@ -9,9 +9,10 @@ import { Logo } from '../shared/Logo';
 interface NavbarProps {
   onOpenProfile: () => void;
   onSelectTab: (tabIndex: number) => void;
+  onToggleMobileMenu?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onOpenProfile, onSelectTab }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onOpenProfile, onSelectTab, onToggleMobileMenu }) => {
   const dispatch = useDispatch<AppDispatch>();
   const { user } = useSelector((state: RootState) => state.auth);
   const { portfolio } = useSelector((state: RootState) => state.portfolio);
@@ -21,17 +22,28 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenProfile, onSelectTab }) =>
   const roi = portfolio?.roi || 0;
 
   return (
-    <header className="sticky top-0 z-30 w-full bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-3 flex items-center justify-between shadow-xs font-poppins">
-      {/* Brand Logo (Image 2 style) */}
+    <header className="sticky top-0 z-30 w-full bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 py-3 flex items-center justify-between shadow-xs font-poppins">
+      {/* Left: Mobile Hamburger Toggle + Brand Logo */}
       <div className="flex items-center gap-3">
+        {onToggleMobileMenu && (
+          <button
+            onClick={onToggleMobileMenu}
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-900 lg:hidden transition-colors border border-slate-200"
+            title="Open Mobile Navigation"
+          >
+            <Menu className="w-5 h-5 text-slate-900" />
+          </button>
+        )}
         <Logo size="md" showTagline={true} />
       </div>
 
-      {/* User Actions & Profile Dropdown */}
-      <div className="flex items-center gap-4">
+      {/* Right: User Actions & Profile Dropdown */}
+      <div className="flex items-center gap-3 sm:gap-4">
         {user ? (
           <>
-            <RankBadge rankTier={rankTier} roi={roi} />
+            <div className="hidden sm:block">
+              <RankBadge rankTier={rankTier} roi={roi} />
+            </div>
 
             <div className="relative">
               <button
@@ -45,7 +57,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenProfile, onSelectTab }) =>
                     <span>{user.name.charAt(0).toUpperCase()}</span>
                   )}
                 </div>
-                <span className="text-xs font-bold text-slate-900 max-w-[110px] truncate">{user.name}</span>
+                <span className="text-xs font-bold text-slate-900 max-w-[110px] truncate hidden sm:inline-block">
+                  {user.name}
+                </span>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
               </button>
 

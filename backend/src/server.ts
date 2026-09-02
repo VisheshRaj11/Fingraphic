@@ -1,32 +1,40 @@
 import express from 'express';
 import http from 'http';
-import { Server as SocketIOServer } from 'socket.io';
+import { Server } from 'socket.io';
 import cors from 'cors';
+
 import { ENV } from './config/env';
-import { connectMongo, disconnectMongo } from './config/db';
-import { getRedisClient, disconnectRedis } from './config/redis';
+import { connectMongo } from './config/db';
+import { errorHandler } from './middleware/errorHandler';
+import { setupSocketIO } from './sockets/chatHandler';
+import { initEmailCron } from './services/emailCron';
+
 import authRoutes from './routes/authRoutes';
 import analyzeRoutes from './routes/analyzeRoutes';
 import portfolioRoutes from './routes/portfolioRoutes';
 import digestRoutes from './routes/digestRoutes';
-import { setupSocketIO } from './sockets/chatHandler';
-import { initEmailCron } from './services/emailCron';
-import { errorHandler } from './middleware/errorHandler';
+import userRoutes from './routes/userRoutes';
+import connectionRoutes from './routes/connectionRoutes';
+import chatRoutes from './routes/chatRoutes';
 
 const app = express();
 const server = http.createServer(app);
 
-// Initialize Socket.io
-const io = new SocketIOServer(server, {
+const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin: ENV.CLIENT_URL,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    credentials: true,
   },
 });
 
-// Middleware
-app.use(cors());
+// Attach io to app instance so REST controllers can emit live events
+app.set('io', io);
+
+// Global Middleware
+app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Healthcheck Route
 app.get('/health', (req, res) => {
@@ -44,6 +52,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/analyze', analyzeRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/digest', digestRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/connections', connectionRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
@@ -63,4 +74,3 @@ server.listen(PORT, () => {
 });
 
 connectMongo().catch((err) => console.warn('[MongoDB] Connection notice:', err.message));
-getRedisClient();

@@ -1,56 +1,78 @@
 import mongoose from 'mongoose';
-import { User, IUser } from '../models/User';
-import { Portfolio, IPortfolio } from '../models/Portfolio';
-import { ChatMessage, IChatMessage } from '../models/ChatMessage';
-import { Watchlist, IWatchlist } from '../models/Watchlist';
-import { StockAnalysisCache, IStockAnalysisCache } from '../models/StockAnalysisCache';
-import { StockDigest, IStockDigest } from '../models/StockDigest';
+import { isMongoConnected } from './db';
+import { User } from '../models/User';
+import { Portfolio } from '../models/Portfolio';
+import { ChatMessage } from '../models/ChatMessage';
+import { Connection, ConnectionStatus } from '../models/Connection';
+import { Watchlist } from '../models/Watchlist';
+import { StockAnalysisCache } from '../models/StockAnalysisCache';
+import { StockDigest } from '../models/StockDigest';
 
-// In-Memory Storage Repositories
+// In-memory Fallback Maps
 const inMemoryUsers = new Map<string, any>();
 const inMemoryPortfolios = new Map<string, any>();
+const inMemoryConnections = new Map<string, any>();
 const inMemoryChatMessages: any[] = [];
 const inMemoryWatchlists: any[] = [];
 const inMemoryAnalysisCache = new Map<string, any>();
-const inMemoryDigests: any[] = [];
-
-export const isMongoConnected = (): boolean => {
-  return mongoose.connection.readyState === 1;
-};
+const inMemoryStockDigests: any[] = [];
 
 // USER REPOSITORY
 export const dbUser = {
   async findOneByEmail(email: string) {
+    const cleanEmail = email.toLowerCase().trim();
     if (isMongoConnected()) {
       try {
-        return await User.findOne({ email: email.toLowerCase() }).lean();
+        const u = await User.findOne({ email: cleanEmail }).lean();
+        if (u) return u;
       } catch (e) {}
     }
-    const target = email.toLowerCase();
-    for (const u of inMemoryUsers.values()) {
-      if (u.email === target) return u;
-    }
-    return null;
+    return Array.from(inMemoryUsers.values()).find((u) => u.email === cleanEmail) || null;
   },
 
   async findById(id: string) {
     if (isMongoConnected()) {
       try {
-        return await User.findById(id).select('-passwordHash').lean();
+        const u = await User.findById(id).select('-passwordHash').lean();
+        if (u) return u;
       } catch (e) {}
     }
-    const u = inMemoryUsers.get(id.toString());
-    if (!u) return null;
-    const copy = { ...u };
-    delete copy.passwordHash;
-    return copy;
+    return inMemoryUsers.get(id.toString()) || null;
+  },
+
+  async searchUsers(query: string, excludeUserId: string, limit = 20) {
+    const cleanQuery = (query || '').toLowerCase().trim();
+    if (isMongoConnected()) {
+      try {
+        const filter: any = { _id: { $ne: excludeUserId } };
+        if (cleanQuery) {
+          filter.$or = [
+            { name: { $regex: cleanQuery, $options: 'i' } },
+            { email: { $regex: cleanQuery, $options: 'i' } },
+          ];
+        }
+        const list = await User.find(filter).select('-passwordHash').limit(limit).lean();
+        if (list.length > 0) return list;
+      } catch (e) {}
+    }
+
+    return Array.from(inMemoryUsers.values())
+      .filter((u) => u._id.toString() !== excludeUserId.toString())
+      .filter((u) => {
+        if (!cleanQuery) return true;
+        return (
+          (u.name && u.name.toLowerCase().includes(cleanQuery)) ||
+          (u.email && u.email.toLowerCase().includes(cleanQuery))
+        );
+      })
+      .slice(0, limit);
   },
 
   async create(data: { email: string; passwordHash: string; name: string; avatarUrl?: string; emailDigestOptIn?: boolean }) {
     const id = new mongoose.Types.ObjectId().toString();
     const doc = {
       _id: id,
-      email: data.email.toLowerCase(),
+      email: data.email.toLowerCase().trim(),
       passwordHash: data.passwordHash,
       name: data.name,
       avatarUrl: data.avatarUrl || '',
@@ -70,21 +92,22 @@ export const dbUser = {
     return doc;
   },
 
-  async updateProfile(id: string, updates: { name?: string; avatarUrl?: string; emailDigestOptIn?: boolean }) {
+  async updateProfile(userId: string, update: { name?: string; avatarUrl?: string; emailDigestOptIn?: boolean }) {
     if (isMongoConnected()) {
       try {
-        const updated = await User.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
+        const updated = await User.findByIdAndUpdate(userId, { $set: update }, { new: true }).select('-passwordHash').lean();
         if (updated) return updated;
       } catch (e) {}
     }
 
-    const u = inMemoryUsers.get(id.toString());
-    if (u) {
-      if (updates.name !== undefined) u.name = updates.name;
-      if (updates.avatarUrl !== undefined) u.avatarUrl = updates.avatarUrl;
-      if (updates.emailDigestOptIn !== undefined) u.emailDigestOptIn = updates.emailDigestOptIn;
-      u.updatedAt = new Date();
-      return u;
+    const existing = inMemoryUsers.get(userId.toString());
+    if (existing) {
+      if (update.name !== undefined) existing.name = update.name;
+      if (update.avatarUrl !== undefined) existing.avatarUrl = update.avatarUrl;
+      if (update.emailDigestOptIn !== undefined) existing.emailDigestOptIn = update.emailDigestOptIn;
+      existing.updatedAt = new Date();
+      inMemoryUsers.set(userId.toString(), existing);
+      return existing;
     }
     return null;
   },
@@ -92,7 +115,8 @@ export const dbUser = {
   async findOptInUsers() {
     if (isMongoConnected()) {
       try {
-        return await User.find({ emailDigestOptIn: true }).lean();
+        const list = await User.find({ emailDigestOptIn: true }).select('-passwordHash').lean();
+        if (list.length > 0) return list;
       } catch (e) {}
     }
     return Array.from(inMemoryUsers.values()).filter((u) => u.emailDigestOptIn);
@@ -162,14 +186,141 @@ export const dbPortfolio = {
   },
 };
 
-// CHAT MESSAGE REPOSITORY
-export const dbChatMessage = {
-  async create(data: { userId: string; ticker: string; content: string; roiAtSend: number; rankTier: string }) {
+// CONNECTION REPOSITORY (1:1 Connections)
+export const dbConnection = {
+  async findBetween(userIdA: string, userIdB: string) {
+    const uA = userIdA.toString();
+    const uB = userIdB.toString();
+    if (isMongoConnected()) {
+      try {
+        const conn = await Connection.findOne({
+          $or: [
+            { requesterId: uA, recipientId: uB },
+            { requesterId: uB, recipientId: uA },
+          ],
+        }).lean();
+        if (conn) return conn;
+      } catch (e) {}
+    }
+
+    return (
+      Array.from(inMemoryConnections.values()).find(
+        (c) =>
+          (c.requesterId.toString() === uA && c.recipientId.toString() === uB) ||
+          (c.requesterId.toString() === uB && c.recipientId.toString() === uA)
+      ) || null
+    );
+  },
+
+  async findById(connectionId: string) {
+    if (isMongoConnected()) {
+      try {
+        const conn = await Connection.findById(connectionId).lean();
+        if (conn) return conn;
+      } catch (e) {}
+    }
+    return inMemoryConnections.get(connectionId.toString()) || null;
+  },
+
+  async create(data: { requesterId: string; recipientId: string; status?: ConnectionStatus }) {
     const id = new mongoose.Types.ObjectId().toString();
     const doc = {
       _id: id,
-      userId: data.userId.toString(),
-      ticker: data.ticker.toUpperCase(),
+      requesterId: data.requesterId.toString(),
+      recipientId: data.recipientId.toString(),
+      status: data.status || 'PENDING',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    if (isMongoConnected()) {
+      try {
+        const created = await Connection.create(doc);
+        return created.toObject();
+      } catch (e) {}
+    }
+
+    inMemoryConnections.set(id, doc);
+    return doc;
+  },
+
+  async updateStatus(connectionId: string, status: ConnectionStatus) {
+    if (isMongoConnected()) {
+      try {
+        const updated = await Connection.findByIdAndUpdate(
+          connectionId,
+          { $set: { status } },
+          { new: true }
+        ).lean();
+        if (updated) return updated;
+      } catch (e) {}
+    }
+
+    const existing = inMemoryConnections.get(connectionId.toString());
+    if (existing) {
+      existing.status = status;
+      existing.updatedAt = new Date();
+      inMemoryConnections.set(connectionId.toString(), existing);
+      return existing;
+    }
+    return null;
+  },
+
+  async listConnectionsForUser(userId: string) {
+    const uId = userId.toString();
+    if (isMongoConnected()) {
+      try {
+        const list = await Connection.find({
+          $or: [
+            { requesterId: uId, status: 'ACCEPTED' },
+            { recipientId: uId, status: 'ACCEPTED' },
+          ],
+        }).lean();
+        if (list.length > 0) return list;
+      } catch (e) {}
+    }
+
+    return Array.from(inMemoryConnections.values()).filter(
+      (c) =>
+        c.status === 'ACCEPTED' &&
+        (c.requesterId.toString() === uId || c.recipientId.toString() === uId)
+    );
+  },
+
+  async listPendingRequestsForUser(userId: string) {
+    const uId = userId.toString();
+    if (isMongoConnected()) {
+      try {
+        const list = await Connection.find({
+          recipientId: uId,
+          status: 'PENDING',
+        }).lean();
+        if (list.length > 0) return list;
+      } catch (e) {}
+    }
+
+    return Array.from(inMemoryConnections.values()).filter(
+      (c) => c.status === 'PENDING' && c.recipientId.toString() === uId
+    );
+  },
+};
+
+// CHAT MESSAGE REPOSITORY (1:1 Private Messaging)
+export const dbChatMessage = {
+  async create(data: {
+    senderId: string;
+    recipientId: string;
+    conversationKey: string;
+    content: string;
+    roiAtSend: number;
+    rankTier: string;
+  }) {
+    const id = new mongoose.Types.ObjectId().toString();
+    const doc = {
+      _id: id,
+      senderId: data.senderId.toString(),
+      recipientId: data.recipientId.toString(),
+      conversationKey: data.conversationKey,
       content: data.content,
       roiAtSend: data.roiAtSend,
       rankTier: data.rankTier,
@@ -178,7 +329,8 @@ export const dbChatMessage = {
 
     if (isMongoConnected()) {
       try {
-        await ChatMessage.create(doc);
+        const created = await ChatMessage.create(doc);
+        return created.toObject();
       } catch (e) {}
     }
 
@@ -186,35 +338,21 @@ export const dbChatMessage = {
     return doc;
   },
 
-  async findByTicker(ticker: string, limit = 50) {
-    const symbol = ticker.toUpperCase();
+  async findByConversationKey(conversationKey: string, limit = 50) {
     if (isMongoConnected()) {
       try {
-        const msgs = await ChatMessage.find({ ticker: symbol })
-          .sort({ createdAt: -1 })
+        const list = await ChatMessage.find({ conversationKey })
+          .sort({ createdAt: 1 })
           .limit(limit)
-          .populate('userId', 'name avatarUrl')
           .lean();
-        if (msgs.length > 0) return msgs.reverse();
+        if (list.length > 0) return list;
       } catch (e) {}
     }
 
-    const filtered = inMemoryChatMessages
-      .filter((m) => m.ticker === symbol)
-      .slice(-limit)
-      .map((m) => {
-        const u = inMemoryUsers.get(m.userId.toString());
-        return {
-          ...m,
-          userId: {
-            _id: m.userId,
-            name: u?.name || 'Trader',
-            avatarUrl: u?.avatarUrl || '',
-          },
-        };
-      });
-
-    return filtered;
+    return inMemoryChatMessages
+      .filter((msg) => msg.conversationKey === conversationKey)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .slice(-limit);
   },
 };
 
@@ -231,12 +369,12 @@ export const dbWatchlist = {
   },
 
   async upsert(userId: string, ticker: string, notes = '') {
-    const symbol = ticker.toUpperCase();
+    const symbol = ticker.toUpperCase().trim();
     if (isMongoConnected()) {
       try {
         const doc = await Watchlist.findOneAndUpdate(
           { userId, ticker: symbol },
-          { userId, ticker: symbol, notes },
+          { notes },
           { upsert: true, new: true }
         ).lean();
         if (doc) return doc;
@@ -246,24 +384,24 @@ export const dbWatchlist = {
     const existingIdx = inMemoryWatchlists.findIndex(
       (w) => w.userId.toString() === userId.toString() && w.ticker === symbol
     );
-    const item = {
+    if (existingIdx >= 0) {
+      inMemoryWatchlists[existingIdx].notes = notes;
+      return inMemoryWatchlists[existingIdx];
+    }
+
+    const newDoc = {
       _id: new mongoose.Types.ObjectId().toString(),
       userId: userId.toString(),
       ticker: symbol,
       notes,
       createdAt: new Date(),
     };
-
-    if (existingIdx >= 0) {
-      inMemoryWatchlists[existingIdx] = item;
-    } else {
-      inMemoryWatchlists.push(item);
-    }
-    return item;
+    inMemoryWatchlists.push(newDoc);
+    return newDoc;
   },
 
   async delete(userId: string, ticker: string) {
-    const symbol = ticker.toUpperCase();
+    const symbol = ticker.toUpperCase().trim();
     if (isMongoConnected()) {
       try {
         await Watchlist.deleteOne({ userId, ticker: symbol });
@@ -279,50 +417,93 @@ export const dbWatchlist = {
   },
 };
 
-// STOCK ANALYSIS CACHE REPOSITORY
+// ANALYSIS CACHE REPOSITORY
 export const dbAnalysisCache = {
   async findByTicker(ticker: string) {
-    const symbol = ticker.toUpperCase();
+    const symbol = ticker.toUpperCase().trim();
     if (isMongoConnected()) {
       try {
-        const doc = await StockAnalysisCache.findOne({ ticker: symbol }).lean();
-        if (doc) return doc;
+        const cached = await StockAnalysisCache.findOne({ ticker: symbol }).lean();
+        if (cached) return cached;
       } catch (e) {}
     }
     return inMemoryAnalysisCache.get(symbol) || null;
   },
 
-  async upsert(data: any) {
-    const symbol = data.ticker.toUpperCase();
+  async upsert(data: {
+    ticker: string;
+    verdict: string;
+    metrics: any;
+    executiveSummary: any;
+    greenFlags: string[];
+    redFlags: string[];
+    reasoningTrail: any[];
+  }) {
+    const symbol = data.ticker.toUpperCase().trim();
+    const doc = {
+      ticker: symbol,
+      verdict: data.verdict,
+      metrics: data.metrics,
+      executiveSummary: data.executiveSummary,
+      greenFlags: data.greenFlags,
+      redFlags: data.redFlags,
+      reasoningTrail: data.reasoningTrail,
+      updatedAt: new Date(),
+    };
+
     if (isMongoConnected()) {
       try {
-        await StockAnalysisCache.findOneAndUpdate({ ticker: symbol }, data, { upsert: true });
+        await StockAnalysisCache.findOneAndUpdate({ ticker: symbol }, doc, { upsert: true });
       } catch (e) {}
     }
-    inMemoryAnalysisCache.set(symbol, data);
-    return data;
+
+    inMemoryAnalysisCache.set(symbol, doc);
+    return doc;
   },
 };
 
-// STOCK DIGEST LOG REPOSITORY
+// STOCK DIGEST REPOSITORY
 export const dbStockDigest = {
-  async create(data: any) {
+  async create(data: {
+    userId: string;
+    tickers: string[];
+    verdictJson: any;
+    sentAt: Date;
+    success: boolean;
+    errorMsg?: string;
+  }) {
+    const id = new mongoose.Types.ObjectId().toString();
+    const doc = {
+      _id: id,
+      userId: data.userId.toString(),
+      tickers: data.tickers,
+      verdictJson: data.verdictJson,
+      sentAt: data.sentAt,
+      success: data.success,
+      errorMsg: data.errorMsg || '',
+    };
+
     if (isMongoConnected()) {
       try {
-        await StockDigest.create(data);
+        const created = await StockDigest.create(doc);
+        return created.toObject();
       } catch (e) {}
     }
-    inMemoryDigests.push(data);
-    return data;
+
+    inMemoryStockDigests.push(doc);
+    return doc;
   },
 
   async findByUserId(userId: string) {
     if (isMongoConnected()) {
       try {
-        const list = await StockDigest.find({ userId }).sort({ sentAt: -1 }).limit(10).lean();
+        const list = await StockDigest.find({ userId }).sort({ sentAt: -1 }).lean();
         if (list.length > 0) return list;
       } catch (e) {}
     }
-    return inMemoryDigests.filter((d) => d.userId?.toString() === userId.toString()).slice(-10);
+
+    return inMemoryStockDigests
+      .filter((d) => d.userId.toString() === userId.toString())
+      .sort((a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime());
   },
 };

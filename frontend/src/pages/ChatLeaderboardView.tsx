@@ -1,167 +1,101 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { MessageSquare, Trophy, Send, Users } from 'lucide-react';
+import { Trophy, UserPlus, Inbox, MessageCircle } from 'lucide-react';
 import { RootState, AppDispatch } from '../app/store';
-import { setActiveTickerRoom, addMessage, setRoomHistory } from '../features/chat/chatSlice';
 import { fetchLeaderboard } from '../features/leaderboard/leaderboardSlice';
-import { connectSocket } from '../lib/socket';
+import { loadConnections, loadPendingRequests } from '../features/chat/chatSlice';
 import { RankBadge } from '../components/shared/Badge';
+import { ConversationList } from '../components/community/ConversationList';
+import { UserDirectory } from '../components/community/UserDirectory';
+import { PendingRequests } from '../components/community/PendingRequests';
+import { ChatWindow } from '../components/community/ChatWindow';
 
 export const ChatLeaderboardView: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { activeTickerRoom, messages } = useSelector((state: RootState) => state.chat);
   const { leaderboard, isLoading: isLeaderboardLoading } = useSelector((state: RootState) => state.leaderboard);
   const { user } = useSelector((state: RootState) => state.auth);
+  const { pendingRequests } = useSelector((state: RootState) => state.chat);
 
-  const [inputMessage, setInputMessage] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const rooms = ['AAPL', 'NVDA', 'MSFT', 'TSLA', 'AMZN', 'META'];
+  const [activeSideTab, setActiveSideTab] = useState<'CONNECTIONS' | 'DIRECTORY' | 'REQUESTS'>('CONNECTIONS');
 
   useEffect(() => {
     dispatch(fetchLeaderboard());
-
-    const socket = connectSocket();
-    socket.emit('join_room', activeTickerRoom);
-
-    socket.on('room_history', (data: { ticker: string; messages: any[] }) => {
-      dispatch(setRoomHistory(data));
-    });
-
-    socket.on('new_message', (msg: any) => {
-      dispatch(addMessage(msg));
-    });
-
-    return () => {
-      socket.emit('leave_room', activeTickerRoom);
-      socket.off('room_history');
-      socket.off('new_message');
-    };
-  }, [dispatch, activeTickerRoom]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleRoomChange = (room: string) => {
-    const socket = connectSocket();
-    socket.emit('leave_room', activeTickerRoom);
-    dispatch(setActiveTickerRoom(room));
-  };
-
-  const handleSendMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputMessage.trim()) return;
-
-    const socket = connectSocket();
-    socket.emit('send_message', {
-      ticker: activeTickerRoom,
-      content: inputMessage.trim(),
-    });
-
-    setInputMessage('');
-  };
+    dispatch(loadConnections());
+    dispatch(loadPendingRequests());
+  }, [dispatch]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-100px)] font-poppins">
-      {/* Ticker Community Chat Section (7 Cols) */}
-      <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full overflow-hidden">
-        {/* Chat Room Header */}
-        <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <MessageSquare className="w-5 h-5 text-indigo-600" />
-            <div>
-              <h3 className="text-base font-extrabold text-slate-900">${activeTickerRoom} Trader Community</h3>
-              <p className="text-xs font-semibold text-slate-500">Live Trader Discussion</p>
-            </div>
-          </div>
-
-          {/* Room Selector Pills */}
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {rooms.map((r) => (
-              <button
-                key={r}
-                onClick={() => handleRoomChange(r)}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all border ${
-                  activeTickerRoom === r
-                    ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                }`}
-              >
-                ${r}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Messages Stream */}
-        <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-slate-50/50">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs font-medium space-y-2">
-              <Users className="w-8 h-8 text-slate-300" />
-              <p>No messages yet in ${activeTickerRoom} room. Be the first to post!</p>
-            </div>
-          ) : (
-            messages.map((msg) => {
-              const isSelf = msg.user.id === user?.id;
-
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-slate-900">{msg.user.name}</span>
-                    <RankBadge rankTier={msg.rankTier} roi={msg.roiAtSend} />
-                    <span className="text-[10px] text-slate-400">
-                      {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-
-                  <div
-                    className={`max-w-[85%] p-3.5 rounded-2xl text-xs font-medium leading-relaxed ${
-                      isSelf
-                        ? 'bg-indigo-600 text-white rounded-br-none shadow-md shadow-indigo-500/15'
-                        : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none shadow-sm'
-                    }`}
-                  >
-                    {msg.content}
-                  </div>
-                </div>
-              );
-            })
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Message Input Form */}
-        <form onSubmit={handleSendMessage} className="p-3 border-t border-slate-200 bg-white flex items-center gap-2">
-          <input
-            type="text"
-            placeholder={`Share market insights in $${activeTickerRoom}...`}
-            maxLength={500}
-            value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-120px)] min-h-[580px] max-h-[760px] font-poppins">
+      {/* 1. Left Sidebar Navigation Panel (3 Cols on lg) */}
+      <div className="lg:col-span-3 h-full bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col p-3.5 space-y-3 overflow-hidden">
+        {/* Navigation Tabs Header */}
+        <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold text-slate-700 shrink-0">
           <button
-            type="submit"
-            disabled={!inputMessage.trim()}
-            className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition-all disabled:opacity-50"
+            onClick={() => setActiveSideTab('CONNECTIONS')}
+            className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all ${
+              activeSideTab === 'CONNECTIONS'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'hover:text-slate-900'
+            }`}
+            title="Chats"
           >
-            <Send className="w-4 h-4" />
+            <MessageCircle className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Chats</span>
           </button>
-        </form>
+
+          <button
+            onClick={() => setActiveSideTab('DIRECTORY')}
+            className={`py-1.5 rounded-lg flex items-center justify-center gap-1 transition-all ${
+              activeSideTab === 'DIRECTORY'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'hover:text-slate-900'
+            }`}
+            title="Directory"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Directory</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSideTab('REQUESTS')}
+            className={`py-1.5 rounded-lg flex items-center justify-center gap-1 relative transition-all ${
+              activeSideTab === 'REQUESTS'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'hover:text-slate-900'
+            }`}
+            title="Requests"
+          >
+            <Inbox className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Requests</span>
+            {pendingRequests.length > 0 && (
+              <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[9px] font-black flex items-center justify-center -top-1 -right-1">
+                {pendingRequests.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Tab Content Container */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {activeSideTab === 'CONNECTIONS' && <ConversationList />}
+          {activeSideTab === 'DIRECTORY' && <UserDirectory />}
+          {activeSideTab === 'REQUESTS' && <PendingRequests />}
+        </div>
       </div>
 
-      {/* Global ROI Leaderboard Section (5 Cols) */}
-      <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col h-full overflow-hidden">
-        <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Trophy className="w-5 h-5 text-amber-500" />
+      {/* 2. Center 1:1 Private Chat Window Panel (5 Cols on lg) */}
+      <div className="lg:col-span-5 h-full bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+        <ChatWindow />
+      </div>
+
+      {/* 3. Right Global ROI Leaderboard Panel (4 Cols on lg) */}
+      <div className="lg:col-span-4 h-full bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+        <div className="p-3.5 border-b border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-amber-500" />
             <div>
-              <h3 className="text-base font-extrabold text-slate-900">Global ROI Leaderboard</h3>
-              <p className="text-xs font-semibold text-slate-500">Live Global Ranking</p>
+              <h3 className="text-sm font-extrabold text-slate-900 leading-none">Global ROI Leaderboard</h3>
+              <p className="text-[10px] font-semibold text-slate-500 mt-0.5">Live Global Ranking</p>
             </div>
           </div>
           <button
@@ -172,7 +106,7 @@ export const ChatLeaderboardView: React.FC = () => {
           </button>
         </div>
 
-        <div className="flex-1 p-4 overflow-y-auto space-y-2">
+        <div className="flex-1 p-3 overflow-y-auto space-y-2">
           {isLeaderboardLoading ? (
             <div className="text-center py-8 text-xs font-medium text-slate-400">Loading global ranks...</div>
           ) : leaderboard.length === 0 ? (
@@ -184,14 +118,14 @@ export const ChatLeaderboardView: React.FC = () => {
               return (
                 <div
                   key={entry.userId}
-                  className={`p-3 rounded-2xl border flex items-center justify-between transition-all ${
+                  className={`p-2.5 rounded-xl border flex items-center justify-between transition-all ${
                     isUserSelf
-                      ? 'bg-indigo-50/70 border-indigo-300 shadow-sm'
+                      ? 'bg-indigo-50/70 border-indigo-300 shadow-xs'
                       : 'bg-white border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 text-slate-800 text-xs font-black flex items-center justify-center">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 text-slate-800 text-xs font-black flex items-center justify-center shrink-0">
                       {entry.rank <= 3 ? (
                         <Trophy className={`w-3.5 h-3.5 ${entry.rank === 1 ? 'text-amber-500' : entry.rank === 2 ? 'text-slate-400' : 'text-amber-700'}`} />
                       ) : (
@@ -199,10 +133,10 @@ export const ChatLeaderboardView: React.FC = () => {
                       )}
                     </div>
 
-                    <div>
-                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <span>{entry.name}</span>
-                        {isUserSelf && <span className="text-[10px] bg-indigo-200 text-indigo-800 font-extrabold px-1.5 py-0.2 rounded">YOU</span>}
+                    <div className="min-w-0 text-left">
+                      <div className="text-xs font-bold text-slate-900 flex items-center gap-1 truncate">
+                        <span className="truncate">{entry.name}</span>
+                        {isUserSelf && <span className="text-[9px] bg-indigo-200 text-indigo-800 font-black px-1 rounded">YOU</span>}
                       </div>
                       <div className="mt-0.5">
                         <RankBadge rankTier={entry.rankTier} />
@@ -210,11 +144,11 @@ export const ChatLeaderboardView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <div className={`text-xs font-black ${entry.roi >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {entry.roi >= 0 ? `+${entry.roi}%` : `${entry.roi}%`}
                     </div>
-                    <div className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                    <div className="text-[9px] font-semibold text-slate-500 mt-0.5">
                       ${entry.portfolioValue.toLocaleString()}
                     </div>
                   </div>
